@@ -54,7 +54,7 @@ export async function handleTikTok(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: `❌ Failed to download TikTok video: ${err.message || ''}`,
+      text: `❌ Failed to download TikTok video: ${err.description || err.message || ''}`,
     });
   }
 }
@@ -67,8 +67,13 @@ export async function handleX(chatId, url) {
   });
 
   try {
-    const parsed = new URL(url);
-    const cleanPath = parsed.pathname;
+    // Pure V8 regex extraction (no browser URL global needed)
+    const pathMatch = url.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)(\/[^?#\s]+)/i);
+    if (!pathMatch) {
+      throw new Error('Invalid X post link format');
+    }
+
+    const cleanPath = pathMatch[1];
     const fxUrl = `https://api.fxtwitter.com${cleanPath}`;
 
     const res = await fetch(fxUrl, {
@@ -139,7 +144,7 @@ export async function handleX(chatId, url) {
 
     const caption = `🎬 <b>${tweet.author?.name || 'X'}:</b>\n${tweet.text || ''}`;
 
-    // Fetch video bytes with browser User-Agent to bypass Twitter's 403 hotlink protection
+    // Fetch video bytes with browser User-Agent to bypass X's 403 hotlink protection
     const vidRes = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -187,7 +192,7 @@ export async function handleX(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: `❌ Failed to download X video: ${err.message || 'Error'}`,
+      text: `❌ Failed to download X video: ${err.description || err.message || 'Error'}`,
     });
   }
 }
@@ -246,7 +251,7 @@ export async function handlePinterest(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: `❌ Failed to download Pinterest video: ${err.message || ''}`,
+      text: `❌ Failed to download Pinterest video: ${err.description || err.message || ''}`,
     });
   }
 }
