@@ -1,0 +1,9 @@
+.env
+downloads/
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+venv/
+.venv/
+cookies.txt
