@@ -1,4 +1,6 @@
 .env
+*.env
+.tgcloud/
 downloads/
 __pycache__/
 *.py[cod]
