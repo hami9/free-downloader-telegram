@@ -14,15 +14,14 @@ export default async function (message, ctx) {
     return await api.sendMessage({
       chat_id: chatId,
       text: (
-        `👋 <b>سلام ${message.from.first_name || 'کاربر'}، به ربات دانلودر خوش آمدید!</b>\n\n` +
-        `⚡️ این ربات <b>۱۰۰٪ سرورلس (Serverless)</b> روی کلود رسمی تلگرام فعال است.\n\n` +
-        `پلتفرم‌های پشتیبانی‌شده:\n` +
-        `▫️ <b>یوتیوب (YouTube):</b> با انتخاب کیفیت (1080p, 720p, 480p, 360p و MP3)\n` +
-        `▫️ <b>تیک‌تاک (TikTok):</b> بدون واترمارک و با بالاترین کیفیت\n` +
-        `▫️ <b>اینستاگرام (Instagram):</b> ریلزها و پست‌ها\n` +
-        `▫️ <b>توییتر / ایکس (Twitter/X):</b> ویدیوها و گیف‌ها\n` +
-        `▫️ <b>پینترست (Pinterest):</b> ویدیوها\n\n` +
-        `📥 <b>کافیست لینک مد نظرت را بفرستی تا در چند ثانیه تحویل بگیری!</b>`
+        `👋 <b>Hello ${message.from.first_name || 'there'}!</b>\n\n` +
+        `Send me a link from any of the following platforms:\n` +
+        `• <b>YouTube</b> (Multiple qualities & MP3)\n` +
+        `• <b>Instagram</b> (Reels & Posts)\n` +
+        `• <b>TikTok</b> (No watermark)\n` +
+        `• <b>Twitter / X</b> (Videos & GIFs)\n` +
+        `• <b>Pinterest</b> (Videos)\n\n` +
+        `📥 <i>Just send the link to download!</i>`
       ),
       parse_mode: 'HTML',
     });
@@ -32,7 +31,7 @@ export default async function (message, ctx) {
   if (!match) {
     return await api.sendMessage({
       chat_id: chatId,
-      text: '⚠️ لطفاً یک لینک معتبر از یوتیوب، اینستاگرام، تیک‌تاک، توییتر یا پینترست ارسال کنید.',
+      text: '⚠️ Please send a valid link from YouTube, Instagram, TikTok, Twitter/X, or Pinterest.',
     });
   }
 
@@ -50,13 +49,13 @@ export default async function (message, ctx) {
         return await api.sendAudio({
           chat_id: chatId,
           audio: cached.fileId,
-          caption: cached.caption || '🎬 دانلود شده با ربات سرورلس',
+          caption: cached.caption || '',
         });
       } else {
         return await api.sendVideo({
           chat_id: chatId,
           video: cached.fileId,
-          caption: cached.caption || '🎬 دانلود شده با ربات سرورلس',
+          caption: cached.caption || '',
           supports_streaming: true,
         });
       }
@@ -92,16 +91,13 @@ export default async function (message, ctx) {
         { text: '📱 360p', callback_data: `ytq|360|${encodedUrl}` },
       ],
       [
-        { text: '🎵 صوتی (MP3)', callback_data: `ytq|audio|${encodedUrl}` },
+        { text: '🎵 Audio (MP3)', callback_data: `ytq|audio|${encodedUrl}` },
       ],
     ];
 
     return await api.sendMessage({
       chat_id: chatId,
-      text: (
-        `📺 <b>ویدیو یوتیوب دریافت شد!</b>\n\n` +
-        `👇 <b>کیفیت مورد نظر خود را جهت دانلود انتخاب کنید:</b>`
-      ),
+      text: '📺 <b>Select video quality:</b>',
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: inlineKeyboard },
     });
@@ -113,6 +109,6 @@ export default async function (message, ctx) {
 
   return await api.sendMessage({
     chat_id: chatId,
-    text: '⚠️ این پلتفرم در حال حاضر پشتیبانی نمی‌شود.',
+    text: '⚠️ This platform is currently not supported.',
   });
 }

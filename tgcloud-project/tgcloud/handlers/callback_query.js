@@ -29,13 +29,13 @@ export default async function (query, ctx) {
         return await api.sendAudio({
           chat_id: chatId,
           audio: cached.fileId,
-          caption: cached.caption || '🎵 دانلود شده با ربات سرورلس',
+          caption: cached.caption || '',
         });
       } else {
         return await api.sendVideo({
           chat_id: chatId,
           video: cached.fileId,
-          caption: cached.caption || `🎬 کیفیت: ${label}`,
+          caption: cached.caption || '',
           supports_streaming: true,
         });
       }
@@ -47,7 +47,7 @@ export default async function (query, ctx) {
   const statusMsg = await api.editMessageText({
     chat_id: chatId,
     message_id: query.message.message_id,
-    text: `⏳ <b>در حال استخراج و ارسال با کیفیت ${label}...</b>`,
+    text: `⏳ <b>Fetching video in ${label}...</b>`,
     parse_mode: 'HTML',
   });
 

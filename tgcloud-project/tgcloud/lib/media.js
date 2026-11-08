@@ -11,7 +11,7 @@ export const COBALT_INSTANCES = [
 export async function handleTikTok(chatId, url) {
   const statusMsg = await api.sendMessage({
     chat_id: chatId,
-    text: '⏳ <b>در حال استخراج ویدیوی تیک‌تاک بدون واترمارک...</b>',
+    text: '⏳ <b>Fetching TikTok video...</b>',
     parse_mode: 'HTML',
   });
 
@@ -23,13 +23,13 @@ export async function handleTikTok(chatId, url) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ ویدیوی تیک‌تاک یافت نشد یا ممکن است خصوصی باشد.',
+        text: '❌ Video not found or post is private.',
       });
     }
 
     const videoUrl = data.data.play;
     const title = data.data.title || 'TikTok Video';
-    const caption = `🎬 <b>${title}</b>\n\n🤖 @FreeDownloadsBot`;
+    const caption = `🎬 <b>${title}</b>`;
 
     const sent = await api.sendVideo({
       chat_id: chatId,
@@ -54,7 +54,7 @@ export async function handleTikTok(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ خطا در دریافت ویدیوی تیک‌تاک.',
+      text: '❌ Failed to download TikTok video.',
     });
   }
 }
@@ -62,7 +62,7 @@ export async function handleTikTok(chatId, url) {
 export async function handleTwitter(chatId, url) {
   const statusMsg = await api.sendMessage({
     chat_id: chatId,
-    text: '⏳ <b>در حال دریافت ویدیوی توییتر / X...</b>',
+    text: '⏳ <b>Fetching Twitter / X video...</b>',
     parse_mode: 'HTML',
   });
 
@@ -77,12 +77,12 @@ export async function handleTwitter(chatId, url) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ ویدیویی در این توییت یافت نشد.',
+        text: '❌ No video found in this tweet.',
       });
     }
 
     const videoUrl = data.media_urls[0];
-    const caption = `🐦 <b>${data.user_name || 'Twitter'}:</b>\n${data.text || ''}\n\n🤖 @FreeDownloadsBot`;
+    const caption = `🐦 <b>${data.user_name || 'Twitter'}:</b>\n${data.text || ''}`;
 
     const sent = await api.sendVideo({
       chat_id: chatId,
@@ -107,7 +107,7 @@ export async function handleTwitter(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ خطا در دریافت ویدیوی توییتر.',
+      text: '❌ Failed to download Twitter video.',
     });
   }
 }
@@ -115,7 +115,7 @@ export async function handleTwitter(chatId, url) {
 export async function handlePinterest(chatId, url) {
   const statusMsg = await api.sendMessage({
     chat_id: chatId,
-    text: '⏳ <b>در حال استخراج ویدیوی پینترست...</b>',
+    text: '⏳ <b>Fetching Pinterest video...</b>',
     parse_mode: 'HTML',
   });
 
@@ -134,12 +134,12 @@ export async function handlePinterest(chatId, url) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ ویدیویی در این لینک پینترست یافت نشد.',
+        text: '❌ No video stream found in this pin.',
       });
     }
 
     const videoUrl = videoMatch[1] || videoMatch[0];
-    const caption = '📌 <b>ویدیوی پینترست</b>\n\n🤖 @FreeDownloadsBot';
+    const caption = '📌 <b>Pinterest Video</b>';
 
     const sent = await api.sendVideo({
       chat_id: chatId,
@@ -164,7 +164,7 @@ export async function handlePinterest(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ خطا در استخراج ویدیوی پینترست.',
+      text: '❌ Failed to download Pinterest video.',
     });
   }
 }
@@ -174,7 +174,7 @@ export async function handleCobalt(chatId, url, quality = 'auto', platform = 'Me
   if (!activeStatusId) {
     const s = await api.sendMessage({
       chat_id: chatId,
-      text: `⏳ <b>در حال استخراج و آماده‌سازی از ${platform}...</b>`,
+      text: `⏳ <b>Fetching from ${platform}...</b>`,
       parse_mode: 'HTML',
     });
     activeStatusId = s.message_id;
@@ -200,7 +200,7 @@ export async function handleCobalt(chatId, url, quality = 'auto', platform = 'Me
       const data = await res.json();
       if (data && data.url) {
         const directMediaUrl = data.url;
-        const caption = `🎬 <b>${platform}</b>\n\n🤖 @FreeDownloadsBot`;
+        const caption = `🎬 <b>${platform}</b>`;
 
         let sent;
         if (isAudio) {
@@ -245,6 +245,6 @@ export async function handleCobalt(chatId, url, quality = 'auto', platform = 'Me
   await api.editMessageText({
     chat_id: chatId,
     message_id: activeStatusId,
-    text: `❌ خطا در دریافت مدیا از ${platform}. ممکن است فایل سنگین یا خصوصی باشد.`,
+    text: `❌ Failed to fetch media from ${platform}. It may be private or too large.`,
   });
 }
