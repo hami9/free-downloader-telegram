@@ -1,7 +1,7 @@
 import { api } from 'sdk';
 import db, { and, eq } from 'sdk/db';
 import { cachedMedia } from '../schema.js';
-import { handleTikTok, handleTwitter, handlePinterest, handleCobalt } from '../lib/media.js';
+import { handleTikTok, handleX, handlePinterest, handleCobalt } from '../lib/media.js';
 
 const URL_REGEX = /https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)/i;
 
@@ -19,7 +19,7 @@ export default async function (message, ctx) {
         `• <b>YouTube</b> (Multiple qualities & MP3)\n` +
         `• <b>Instagram</b> (Reels & Posts)\n` +
         `• <b>TikTok</b> (No watermark)\n` +
-        `• <b>Twitter / X</b> (Videos & GIFs)\n` +
+        `• <b>X</b> (Videos & GIFs)\n` +
         `• <b>Pinterest</b> (Videos)\n\n` +
         `📥 <i>Just send the link to download!</i>`
       ),
@@ -31,7 +31,7 @@ export default async function (message, ctx) {
   if (!match) {
     return await api.sendMessage({
       chat_id: chatId,
-      text: '⚠️ Please send a valid link from YouTube, Instagram, TikTok, Twitter/X, or Pinterest.',
+      text: '⚠️ Please send a valid link from YouTube, Instagram, TikTok, X, or Pinterest.',
     });
   }
 
@@ -71,8 +71,8 @@ export default async function (message, ctx) {
     return await handleTikTok(chatId, url);
   }
 
-  if (lowerUrl.includes('twitter.com') || lowerUrl.includes('x.com')) {
-    return await handleTwitter(chatId, url);
+  if (lowerUrl.includes('x.com') || lowerUrl.includes('twitter.com')) {
+    return await handleX(chatId, url);
   }
 
   if (lowerUrl.includes('pinterest.com') || lowerUrl.includes('pin.it')) {

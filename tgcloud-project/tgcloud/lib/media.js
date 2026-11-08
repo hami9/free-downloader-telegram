@@ -1,11 +1,11 @@
-import { api, fetch } from 'sdk';
+import { api, fetch, InputFile } from 'sdk';
 import { cachedMedia } from '../schema.js';
 import db from 'sdk/db';
 
 export const COBALT_INSTANCES = [
-  'https://cobalt-api.kwiatekm.tokyo',
+  'https://cobalt.hyonsu.com',
   'https://api.cobalt.tools',
-  'https://cobalt.hyonsu.com'
+  'https://cobalt-api.kwiatekm.tokyo'
 ];
 
 export async function handleTikTok(chatId, url) {
@@ -54,15 +54,15 @@ export async function handleTikTok(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ Failed to download TikTok video.',
+      text: `❌ Failed to download TikTok video: ${err.message || ''}`,
     });
   }
 }
 
-export async function handleTwitter(chatId, url) {
+export async function handleX(chatId, url) {
   const statusMsg = await api.sendMessage({
     chat_id: chatId,
-    text: '⏳ <b>Fetching Twitter / X video...</b>',
+    text: '⏳ <b>Fetching X video...</b>',
     parse_mode: 'HTML',
   });
 
@@ -73,17 +73,22 @@ export async function handleTwitter(chatId, url) {
 
     const res = await fetch(fxUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
     });
-    const data = await res.json();
 
+    if (!res.ok) {
+      throw new Error(`X API returned HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
     const tweet = data.tweet;
+
     if (!tweet) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ Tweet not found or account is private.',
+        text: '❌ Post not found or account is private.',
       });
     }
 
@@ -92,7 +97,7 @@ export async function handleTwitter(chatId, url) {
       const photos = tweet.media?.photos || [];
       if (photos.length > 0) {
         const photoUrl = photos[0].url;
-        const caption = `🐦 <b>${tweet.author?.name || 'Twitter'}:</b>\n${tweet.text || ''}`;
+        const caption = `🎬 <b>${tweet.author?.name || 'X'}:</b>\n${tweet.text || ''}`;
         await api.sendPhoto({
           chat_id: chatId,
           photo: photoUrl,
@@ -105,20 +110,20 @@ export async function handleTwitter(chatId, url) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ No video or media found in this tweet.',
+        text: '❌ No video or media found in this post.',
       });
     }
 
     const videoObj = videos[0];
     const duration = videoObj.duration || 30;
 
-    // Filter mp4 variants and choose the best quality within Telegram's URL fetch limit (~20 MB)
+    // Filter mp4 variants and choose the best quality that fits in memory (< 25 MB)
     let targetUrl = videoObj.url;
     if (videoObj.variants && videoObj.variants.length > 0) {
       const mp4s = videoObj.variants.filter(v => v.content_type === 'video/mp4');
       mp4s.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
 
-      const maxBits = 20 * 1024 * 1024 * 8; // 20 MB in bits
+      const maxBits = 25 * 1024 * 1024 * 8; // 25 MB
       let chosen = null;
 
       for (const variant of mp4s) {
@@ -132,11 +137,36 @@ export async function handleTwitter(chatId, url) {
       }
     }
 
-    const caption = `🐦 <b>${tweet.author?.name || 'Twitter'}:</b>\n${tweet.text || ''}`;
+    const caption = `🎬 <b>${tweet.author?.name || 'X'}:</b>\n${tweet.text || ''}`;
+
+    // Fetch video bytes with browser User-Agent to bypass Twitter's 403 hotlink protection
+    const vidRes = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    });
+
+    if (!vidRes.ok) {
+      throw new Error(`Failed to fetch video stream: HTTP ${vidRes.status}`);
+    }
+
+    const chunks = [];
+    for await (const chunk of vidRes.body) {
+      chunks.push(chunk);
+    }
+    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+    const bytes = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const videoFile = new InputFile(bytes, 'x_video.mp4', { type: 'video/mp4' });
 
     const sent = await api.sendVideo({
       chat_id: chatId,
-      video: targetUrl,
+      video: videoFile,
       caption: caption,
       parse_mode: 'HTML',
       supports_streaming: true,
@@ -157,10 +187,12 @@ export async function handleTwitter(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ Failed to download Twitter video.',
+      text: `❌ Failed to download X video: ${err.message || 'Error'}`,
     });
   }
 }
+
+export const handleTwitter = handleX;
 
 export async function handlePinterest(chatId, url) {
   const statusMsg = await api.sendMessage({
@@ -214,7 +246,7 @@ export async function handlePinterest(chatId, url) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: statusMsg.message_id,
-      text: '❌ Failed to download Pinterest video.',
+      text: `❌ Failed to download Pinterest video: ${err.message || ''}`,
     });
   }
 }
