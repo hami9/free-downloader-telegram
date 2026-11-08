@@ -5,5 +5,8 @@
     "deploy": "tgcloud push",
     "status": "tgcloud status",
     "run": "tgcloud run"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "^0.2.0"
   }
 }

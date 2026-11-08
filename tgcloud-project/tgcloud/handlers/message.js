@@ -1,7 +1,7 @@
 import { api } from 'sdk';
 import db, { and, eq } from 'sdk/db';
 import { cachedMedia } from '../schema.js';
-import { handleTikTok, handleX, handlePinterest, handleCobalt } from '../lib/media.js';
+import { handleTikTok, handleX, handleInstagram, handlePinterest } from '../lib/media.js';
 
 const URL_REGEX = /https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)/i;
 
@@ -19,8 +19,8 @@ export default async function (message, ctx) {
         `• <b>YouTube</b> (Multiple qualities & MP3)\n` +
         `• <b>Instagram</b> (Reels & Posts)\n` +
         `• <b>TikTok</b> (No watermark)\n` +
-        `• <b>X</b> (Videos & GIFs)\n` +
-        `• <b>Pinterest</b> (Videos)\n\n` +
+        `• <b>X</b> (Videos & Photos)\n` +
+        `• <b>Pinterest</b> (Videos & Pins)\n\n` +
         `📥 <i>Just send the link to download!</i>`
       ),
       parse_mode: 'HTML',
@@ -37,36 +37,48 @@ export default async function (message, ctx) {
 
   const url = match[0];
 
-  // 1. Check built-in SQLite cache first
-  try {
-    const cached = await db.select()
-      .from(cachedMedia)
-      .where(and(eq(cachedMedia.url, url), eq(cachedMedia.formatId, '')))
-      .get();
+  // 1. Check built-in SQLite cache first (for non-YouTube links)
+  const lowerUrl = url.toLowerCase();
+  const isYouTube = lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be');
 
-    if (cached) {
-      if (cached.mediaType === 'audio') {
-        return await api.sendAudio({
-          chat_id: chatId,
-          audio: cached.fileId,
-          caption: cached.caption || '',
-        });
-      } else {
-        return await api.sendVideo({
-          chat_id: chatId,
-          video: cached.fileId,
-          caption: cached.caption || '',
-          supports_streaming: true,
-        });
+  if (!isYouTube) {
+    try {
+      const cached = await db.select()
+        .from(cachedMedia)
+        .where(and(eq(cachedMedia.url, url), eq(cachedMedia.formatId, '')))
+        .get();
+
+      if (cached) {
+        if (cached.mediaType === 'audio') {
+          return await api.sendAudio({
+            chat_id: chatId,
+            audio: cached.fileId,
+            caption: cached.caption || '',
+            parse_mode: 'HTML',
+          });
+        } else if (cached.mediaType === 'photo') {
+          return await api.sendPhoto({
+            chat_id: chatId,
+            photo: cached.fileId,
+            caption: cached.caption || '',
+            parse_mode: 'HTML',
+          });
+        } else {
+          return await api.sendVideo({
+            chat_id: chatId,
+            video: cached.fileId,
+            caption: cached.caption || '',
+            parse_mode: 'HTML',
+            supports_streaming: true,
+          });
+        }
       }
+    } catch (err) {
+      // DB cache check error ignored
     }
-  } catch (err) {
-    // DB cache check error ignored
   }
 
-  // 2. Identify platform
-  const lowerUrl = url.toLowerCase();
-
+  // 2. Route by platform
   if (lowerUrl.includes('tiktok.com')) {
     return await handleTikTok(chatId, url);
   }
@@ -75,23 +87,35 @@ export default async function (message, ctx) {
     return await handleX(chatId, url);
   }
 
+  if (lowerUrl.includes('instagram.com') || lowerUrl.includes('instagr.am')) {
+    return await handleInstagram(chatId, url);
+  }
+
   if (lowerUrl.includes('pinterest.com') || lowerUrl.includes('pin.it')) {
     return await handlePinterest(chatId, url);
   }
 
-  if (lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be')) {
-    const encodedUrl = encodeURIComponent(url);
+  if (isYouTube) {
+    const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|shorts\/|embed\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
+    if (!ytMatch) {
+      return await api.sendMessage({
+        chat_id: chatId,
+        text: '❌ Invalid YouTube video link.',
+      });
+    }
+
+    const videoId = ytMatch[1];
     const inlineKeyboard = [
       [
-        { text: '🎬 1080p (FHD)', callback_data: `ytq|1080|${encodedUrl}` },
-        { text: '🎬 720p (HD)', callback_data: `ytq|720|${encodedUrl}` },
+        { text: '🎬 1080p (FHD)', callback_data: `ytq|1080|${videoId}` },
+        { text: '🎬 720p (HD)', callback_data: `ytq|720|${videoId}` },
       ],
       [
-        { text: '📺 480p (SD)', callback_data: `ytq|480|${encodedUrl}` },
-        { text: '📱 360p', callback_data: `ytq|360|${encodedUrl}` },
+        { text: '📺 480p (SD)', callback_data: `ytq|480|${videoId}` },
+        { text: '📱 360p', callback_data: `ytq|360|${videoId}` },
       ],
       [
-        { text: '🎵 Audio (MP3)', callback_data: `ytq|audio|${encodedUrl}` },
+        { text: '🎵 Audio (MP3)', callback_data: `ytq|audio|${videoId}` },
       ],
     ];
 
@@ -101,10 +125,6 @@ export default async function (message, ctx) {
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: inlineKeyboard },
     });
-  }
-
-  if (lowerUrl.includes('instagram.com') || lowerUrl.includes('instagr.am')) {
-    return await handleCobalt(chatId, url, 'auto', 'Instagram');
   }
 
   return await api.sendMessage({

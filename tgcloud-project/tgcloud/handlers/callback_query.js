@@ -1,7 +1,7 @@
 import { api } from 'sdk';
 import db, { and, eq } from 'sdk/db';
 import { cachedMedia } from '../schema.js';
-import { handleCobalt } from '../lib/media.js';
+import { handleYouTubeDownload } from '../lib/media.js';
 
 export default async function (query, ctx) {
   await api.answerCallbackQuery({ callback_query_id: query.id });
@@ -9,8 +9,8 @@ export default async function (query, ctx) {
   const data = query.data || '';
   if (!data.startsWith('ytq|')) return;
 
-  const [, quality, encodedUrl] = data.split('|');
-  const url = decodeURIComponent(encodedUrl);
+  const [, quality, videoId] = data.split('|');
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
   const chatId = query.message.chat.id;
 
   const isAudio = quality === 'audio';
@@ -30,12 +30,14 @@ export default async function (query, ctx) {
           chat_id: chatId,
           audio: cached.fileId,
           caption: cached.caption || '',
+          parse_mode: 'HTML',
         });
       } else {
         return await api.sendVideo({
           chat_id: chatId,
           video: cached.fileId,
           caption: cached.caption || '',
+          parse_mode: 'HTML',
           supports_streaming: true,
         });
       }
@@ -47,9 +49,9 @@ export default async function (query, ctx) {
   const statusMsg = await api.editMessageText({
     chat_id: chatId,
     message_id: query.message.message_id,
-    text: `⏳ <b>Fetching video in ${label}...</b>`,
+    text: `⏳ <b>Fetching YouTube ${label}...</b>`,
     parse_mode: 'HTML',
   });
 
-  await handleCobalt(chatId, url, quality, 'YouTube', statusMsg.message_id);
+  await handleYouTubeDownload(chatId, url, quality, statusMsg.message_id);
 }
