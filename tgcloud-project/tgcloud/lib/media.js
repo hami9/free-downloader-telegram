@@ -68,25 +68,75 @@ export async function handleTwitter(chatId, url) {
 
   try {
     const parsed = new URL(url);
-    const vxUrl = `https://api.vxtwitter.com${parsed.pathname}`;
+    const cleanPath = parsed.pathname;
+    const fxUrl = `https://api.fxtwitter.com${cleanPath}`;
 
-    const res = await fetch(vxUrl);
+    const res = await fetch(fxUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+      },
+    });
     const data = await res.json();
 
-    if (!data || !data.media_urls || data.media_urls.length === 0) {
+    const tweet = data.tweet;
+    if (!tweet) {
       return await api.editMessageText({
         chat_id: chatId,
         message_id: statusMsg.message_id,
-        text: '❌ No video found in this tweet.',
+        text: '❌ Tweet not found or account is private.',
       });
     }
 
-    const videoUrl = data.media_urls[0];
-    const caption = `🐦 <b>${data.user_name || 'Twitter'}:</b>\n${data.text || ''}`;
+    const videos = tweet.media?.videos || [];
+    if (videos.length === 0) {
+      const photos = tweet.media?.photos || [];
+      if (photos.length > 0) {
+        const photoUrl = photos[0].url;
+        const caption = `🐦 <b>${tweet.author?.name || 'Twitter'}:</b>\n${tweet.text || ''}`;
+        await api.sendPhoto({
+          chat_id: chatId,
+          photo: photoUrl,
+          caption: caption,
+          parse_mode: 'HTML',
+        });
+        return await api.deleteMessage({ chat_id: chatId, message_id: statusMsg.message_id });
+      }
+
+      return await api.editMessageText({
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        text: '❌ No video or media found in this tweet.',
+      });
+    }
+
+    const videoObj = videos[0];
+    const duration = videoObj.duration || 30;
+
+    // Filter mp4 variants and choose the best quality within Telegram's URL fetch limit (~20 MB)
+    let targetUrl = videoObj.url;
+    if (videoObj.variants && videoObj.variants.length > 0) {
+      const mp4s = videoObj.variants.filter(v => v.content_type === 'video/mp4');
+      mp4s.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
+
+      const maxBits = 20 * 1024 * 1024 * 8; // 20 MB in bits
+      let chosen = null;
+
+      for (const variant of mp4s) {
+        const estBits = (variant.bitrate || 0) * duration;
+        if (estBits <= maxBits || !chosen) {
+          chosen = variant;
+        }
+      }
+      if (chosen) {
+        targetUrl = chosen.url;
+      }
+    }
+
+    const caption = `🐦 <b>${tweet.author?.name || 'Twitter'}:</b>\n${tweet.text || ''}`;
 
     const sent = await api.sendVideo({
       chat_id: chatId,
-      video: videoUrl,
+      video: targetUrl,
       caption: caption,
       parse_mode: 'HTML',
       supports_streaming: true,
