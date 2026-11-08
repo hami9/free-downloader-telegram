@@ -1,0 +1,8 @@
+{
+  "$schema": "https://core.telegram.org/tgcloud.schema.json",
+  "name": "free_downloads_bot",
+  "entrypoint": "index.js",
+  "database": {
+    "schema": "schema.js"
+  }
+}

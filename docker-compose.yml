@@ -6,25 +6,32 @@ services:
     container_name: downloader_redis
     restart: unless-stopped
     command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - bot_network
 
-  bot:
+  # Download Cluster API (Receives requests from Telegram Serverless @tgcloud/bot via fetch)
+  cluster_api:
     build: .
-    container_name: downloader_bot
+    container_name: downloader_cluster_api
     restart: unless-stopped
-    command: python -m app.bot
+    command: uvicorn backend-cluster.main_api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
     depends_on:
       - redis
     networks:
       - bot_network
 
+  # Distributed Worker Pool (Downloads videos, muxes with ffmpeg, and uploads to Telegram)
   worker:
     build: .
     restart: unless-stopped
@@ -33,6 +40,7 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
     volumes:
       - worker_downloads:/app/downloads
     depends_on:
@@ -40,24 +48,9 @@ services:
     networks:
       - bot_network
 
-# Uncomment this section if you want to run a Local Telegram Bot API Server (Upload up to 2GB)
-#   telegram-bot-api:
-#     image: aiogram/telegram-bot-api:latest
-#     container_name: telegram_bot_api
-#     restart: unless-stopped
-#     environment:
-#       TELEGRAM_API_ID: "YOUR_TELEGRAM_API_ID"
-#       TELEGRAM_API_HASH: "YOUR_TELEGRAM_API_HASH"
-#       TELEGRAM_LOCAL: "true"
-#     volumes:
-#       - tg_api_data:/var/lib/telegram-bot-api
-#     networks:
-#       - bot_network
-
 volumes:
   redis_data:
   worker_downloads:
-  tg_api_data:
 
 networks:
   bot_network:
