@@ -1,11 +1,25 @@
+# Secrets & environment files
 .env
 *.env
 .tgcloud/
-downloads/
+**/.tgcloud/
+cookies.txt
+astier-publisher/config.json
+astier-publisher/history.json
+astier-publisher/last_caption.txt
+tgcloud-project/tgcloud/endpoints/diag.js
+
+# Dependencies & build caches
+node_modules/
+**/node_modules/
 __pycache__/
 *.py[cod]
 *$py.class
-*.log
 venv/
 .venv/
-cookies.txt
+
+# Runtime artifacts & OS files
+downloads/
+*.log
+.DS_Store
+Thumbs.db

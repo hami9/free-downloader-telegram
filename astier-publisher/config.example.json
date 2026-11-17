@@ -1,0 +1,16 @@
+{
+  "mode": "telegram",
+  "telegram": {
+    "botToken": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chatId": "YOUR_TELEGRAM_CHAT_ID"
+  },
+  "apiVersion": "v21.0",
+  "igUserId": "me",
+  "accessToken": "",
+  "tokenUpdatedAt": "",
+  "cloudinary": {
+    "cloudName": "",
+    "uploadPreset": ""
+  },
+  "imgbbApiKey": ""
+}

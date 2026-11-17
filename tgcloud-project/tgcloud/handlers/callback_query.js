@@ -1,57 +1,151 @@
 import { api } from 'sdk';
-import db, { and, eq } from 'sdk/db';
-import { cachedMedia } from '../schema.js';
-import { handleYouTubeDownload } from '../lib/media.js';
+import {
+  handleYouTubeDownload,
+  handleMediaPartCallback,
+  handleOriginalFileCallback,
+  handleAudioCallback,
+  cancelDownloadTask,
+  sendCachedEntry,
+  runWithSingleflight,
+  getCachedEntry,
+  claimUpdateLock,
+  releaseUpdateLock,
+  safeDeleteMessage,
+  safeEditMessageText,
+} from '../lib/media.js';
 
 export default async function (query, ctx) {
-  await api.answerCallbackQuery({ callback_query_id: query.id });
-
   const data = query.data || '';
-  if (!data.startsWith('ytq|')) return;
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
+  // Maintain original user's link reply thread if present
+  const replyToMsgId = query.message?.reply_to_message?.message_id || messageId;
 
-  const [, quality, videoId] = data.split('|');
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const chatId = query.message.chat.id;
-
-  const isAudio = quality === 'audio';
-  const label = isAudio ? 'MP3' : `${quality}p`;
-
-  // Check SQLite cache for this quality
-  try {
-    const cached = await db.select()
-      .from(cachedMedia)
-      .where(and(eq(cachedMedia.url, url), eq(cachedMedia.formatId, quality)))
-      .get();
-
-    if (cached) {
-      await api.deleteMessage({ chat_id: chatId, message_id: query.message.message_id });
-      if (cached.mediaType === 'audio') {
-        return await api.sendAudio({
-          chat_id: chatId,
-          audio: cached.fileId,
-          caption: cached.caption || '',
-          parse_mode: 'HTML',
-        });
-      } else {
-        return await api.sendVideo({
-          chat_id: chatId,
-          video: cached.fileId,
-          caption: cached.caption || '',
-          parse_mode: 'HTML',
-          supports_streaming: true,
-        });
-      }
+  // 1. Handle Cancel Download button
+  if (data.startsWith('ytc|')) {
+    const [, token] = data.split('|');
+    if (chatId && token) {
+      await cancelDownloadTask(chatId, token);
     }
-  } catch (err) {
-    // DB check error ignored
+    try {
+      await api.answerCallbackQuery({
+        callback_query_id: query.id,
+        text: '🛑 Cancelling download...',
+      });
+    } catch (e) {}
+    if (chatId && messageId) {
+      await safeEditMessageText({
+        chat_id: chatId,
+        message_id: messageId,
+        text: '🛑 <b>Download cancelled.</b>',
+        parse_mode: 'HTML',
+      });
+    }
+    return;
   }
 
-  const statusMsg = await api.editMessageText({
-    chat_id: chatId,
-    message_id: query.message.message_id,
-    text: `⏳ <b>Fetching YouTube ${label}...</b>`,
-    parse_mode: 'HTML',
-  });
+  const isYtQuality = data.startsWith('ytq|');
+  const isYtPart = data.startsWith('ytp|');
+  const isMediaPart = data.startsWith('mp|');
+  const isOrigPhoto = data.startsWith('orig|');
+  const isPostAudio = data.startsWith('aud|');
 
-  await handleYouTubeDownload(chatId, url, quality, statusMsg.message_id);
+  if ((!isYtQuality && !isYtPart && !isMediaPart && !isOrigPhoto && !isPostAudio) || !chatId) {
+    try {
+      await api.answerCallbackQuery({ callback_query_id: query.id });
+    } catch (e) {}
+    return;
+  }
+
+  // 2. Prevent Telegram webhook retries for the exact same callback_query.id
+  if (query.id) {
+    const cbqAcquired = await claimUpdateLock(chatId, `cbq_${query.id}`, 3600);
+    if (!cbqAcquired) {
+      return;
+    }
+  }
+
+  // 3. Prevent concurrent double-tap of the same button on the same message
+  const lockSuffix = isYtPart || isMediaPart || isOrigPhoto || isPostAudio ? data : messageId;
+  const activeMsgLock = lockSuffix ? `ytdl_${lockSuffix}` : null;
+  if (activeMsgLock) {
+    const msgAcquired = await claimUpdateLock(chatId, activeMsgLock, 300);
+    if (!msgAcquired) {
+      try {
+        await api.answerCallbackQuery({
+          callback_query_id: query.id,
+          text: '⏳ Download is already in progress...',
+        });
+      } catch (e) {}
+      return;
+    }
+  }
+
+  try {
+    await api.answerCallbackQuery({ callback_query_id: query.id });
+  } catch (e) {}
+
+  try {
+    if (isOrigPhoto) {
+      const [, target, refId] = data.split('|');
+      await handleOriginalFileCallback({ chatId, target, refId, replyToMsgId });
+      return;
+    }
+
+    if (isPostAudio) {
+      const [, refId] = data.split('|');
+      await handleAudioCallback({ chatId, refId, replyToMsgId });
+      return;
+    }
+
+    if (isMediaPart) {
+      const [, partStr, refId] = data.split('|');
+      const partIndex = Math.max(1, Number(partStr) || 1);
+      await handleMediaPartCallback({ chatId, partIndex, refId, messageId, replyToMsgId });
+      return;
+    }
+
+    let quality;
+    let videoId;
+    let partIndex = 1;
+    if (isYtPart) {
+      const [, q, partStr, vid] = data.split('|');
+      quality = q;
+      partIndex = Math.max(1, Number(partStr) || 1);
+      videoId = vid;
+    } else {
+      const [, q, vid] = data.split('|');
+      quality = q;
+      videoId = vid;
+    }
+
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const statusMsgId = isYtQuality ? messageId : null;
+
+    // 4. Check SQLite + memory cache & singleflight stampede lock
+    const cacheKey = partIndex > 1 ? `${quality}_p${partIndex}` : quality;
+    const cached = await getCachedEntry(url, cacheKey);
+    if (cached) {
+      if (statusMsgId) {
+        await safeDeleteMessage(chatId, statusMsgId);
+      }
+      return await sendCachedEntry(chatId, cached, replyToMsgId);
+    }
+
+    const sf = await runWithSingleflight(
+      url,
+      () => handleYouTubeDownload(chatId, url, quality, statusMsgId, replyToMsgId, partIndex),
+      { formatId: cacheKey, lockSuffix: cacheKey }
+    );
+    if (sf.role === 'hit' && sf.cached) {
+      if (statusMsgId) {
+        await safeDeleteMessage(chatId, statusMsgId);
+      }
+      return await sendCachedEntry(chatId, sf.cached, replyToMsgId);
+    }
+  } finally {
+    if (activeMsgLock) {
+      await releaseUpdateLock(chatId, activeMsgLock);
+    }
+  }
 }
