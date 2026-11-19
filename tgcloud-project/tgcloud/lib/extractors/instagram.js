@@ -186,17 +186,30 @@ function getIgExtFromUrl(u, fallback = 'jpg') {
 
 export function pickBestImageFromNode(node) {
   if (!node) return '';
+  const origW = Number(node.original_width || node.dimensions?.width || 0);
+  const origH = Number(node.original_height || node.dimensions?.height || 0);
   const candidates = [];
   const push = (url, w, h, prio = 1) => {
     if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
-    const width = Number(w) || 0;
-    const height = Number(h) || 0;
-    candidates.push({ url, area: width * height, width, prio });
+    const stpMatch = url.match(/[?&]stp=([^&]+)/i);
+    const stpVal = stpMatch ? stpMatch[1] : '';
+    const resizeMatch = stpVal.match(/(?:^|_)[ps](\d+)x(\d+)(?:_|$)/i);
+    const isUnscaled = !resizeMatch && !/\/[ps]\d+x\d+\//i.test(url);
+    let width = Number(w) || 0;
+    let height = Number(h) || 0;
+    if (resizeMatch && !width) {
+      width = Number(resizeMatch[1]) || 0;
+      height = Number(resizeMatch[2]) || 0;
+    } else if (isUnscaled && !width) {
+      width = origW || 9999;
+      height = origH || 9999;
+    }
+    candidates.push({ url, unscaled: isUnscaled ? 1 : 0, area: width * height, width, prio });
   };
 
   if (Array.isArray(node.image_versions2?.candidates)) {
     for (const c of node.image_versions2.candidates) {
-      push(c?.url, c?.width, c?.height, 3);
+      push(c?.url, c?.width, c?.height, 4);
     }
   }
   if (Array.isArray(node.display_resources)) {
@@ -206,6 +219,9 @@ export function pickBestImageFromNode(node) {
   }
   if (node.display_url) {
     push(node.display_url, node.dimensions?.width, node.dimensions?.height, 2);
+  }
+  if (node.display_uri) {
+    push(node.display_uri, 0, 0, 2);
   }
   if (Array.isArray(node.thumbnail_resources)) {
     for (const c of node.thumbnail_resources) {
@@ -217,7 +233,7 @@ export function pickBestImageFromNode(node) {
   }
 
   if (!candidates.length) return '';
-  candidates.sort((a, b) => (b.area - a.area) || (b.width - a.width) || (b.prio - a.prio));
+  candidates.sort((a, b) => (b.unscaled - a.unscaled) || (b.area - a.area) || (b.width - a.width) || (b.prio - a.prio));
   return candidates[0].url;
 }
 
@@ -229,7 +245,14 @@ function pickBestVideoFromNode(node) {
       .sort((a, b) => {
         const areaA = (Number(a.width) || 0) * (Number(a.height) || 0);
         const areaB = (Number(b.width) || 0) * (Number(b.height) || 0);
-        return (areaB - areaA) || ((Number(b.width) || 0) - (Number(a.width) || 0));
+        if (areaB !== areaA) return areaB - areaA;
+        if ((Number(b.width) || 0) !== (Number(a.width) || 0)) {
+          return (Number(b.width) || 0) - (Number(a.width) || 0);
+        }
+        // In Polaris video_versions (no width/height), type 101 is highest progressive quality
+        const rankA = Number(a.type) === 101 ? 0 : (Number(a.type) || 999);
+        const rankB = Number(b.type) === 101 ? 0 : (Number(b.type) || 999);
+        return rankA - rankB;
       });
     if (sorted[0]?.url) return sorted[0].url;
   }
@@ -262,10 +285,29 @@ function extractIgAudioTrack(media, shortcode, authorTitle) {
   };
 }
 
+function isIgVideoThumbnailUrl(rawUrl) {
+  const m = String(rawUrl || '').match(/[?&]efg=([^&]+)/i);
+  if (!m?.[1]) return false;
+  try {
+    const decoded = decodeBase64UrlJson(decodeURIComponent(m[1]));
+    const tag = String(decoded?.vencode_tag || '').toLowerCase();
+    return (
+      tag.includes('video_') ||
+      tag.includes('_thumbnail') ||
+      tag.startsWith('clips.') ||
+      tag.includes('igtv') ||
+      tag.includes('reel')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function parseIgMediaObject(media, shortcode) {
   const slides = [];
+  let hasMissingVideo = false;
   if (!media || typeof media !== 'object') {
-    return { slides, authorTitle: '', postCaption: '', audioTrack: null };
+    return { slides, authorTitle: '', postCaption: '', audioTrack: null, hasMissingVideo: false };
   }
 
   const authorTitle = media.owner?.username || media.user?.username || '';
@@ -279,21 +321,41 @@ export function parseIgMediaObject(media, shortcode) {
   items.forEach((node, idx) => {
     const suffix = items.length > 1 ? `_${idx + 1}` : '';
     const vidUrl = pickBestVideoFromNode(node);
-    const explicitlyPhoto = node?.is_video === false || node?.media_type === 1;
+    const explicitlyPhoto =
+      node?.is_video === false ||
+      node?.media_type === 1 ||
+      node?.__typename === 'XIGPolarisImageMedia';
+    const explicitlyVideo =
+      node?.is_video === true ||
+      node?.media_type === 2 ||
+      node?.__typename === 'GraphVideo' ||
+      node?.__typename === 'XIGPolarisVideoMedia' ||
+      node?.product_type === 'clips' ||
+      node?.product_type === 'igtv';
+
     if (!explicitlyPhoto && vidUrl) {
       slides.push({ type: 'video', url: vidUrl, filename: `ig_${shortcode}${suffix}.mp4` });
       return;
     }
+    // Never substitute a video/reel cover thumbnail as a photo when Meta omits video_url
+    if (explicitlyVideo) {
+      hasMissingVideo = true;
+      return;
+    }
     const imgUrl = pickBestImageFromNode(node);
     if (imgUrl) {
+      if (isIgVideoThumbnailUrl(imgUrl)) {
+        hasMissingVideo = true;
+        return;
+      }
       const ext = getIgExtFromUrl(imgUrl, 'jpg');
       slides.push({ type: 'photo', url: imgUrl, filename: `ig_${shortcode}${suffix}.${ext}` });
     }
   });
 
-  const isPhotoOnly = slides.length > 0 && slides.every(s => s.type === 'photo');
+  const isPhotoOnly = slides.length > 0 && !hasMissingVideo && slides.every(s => s.type === 'photo');
   const audioTrack = isPhotoOnly ? extractIgAudioTrack(media, shortcode, authorTitle) : null;
-  return { slides, authorTitle, postCaption, audioTrack };
+  return { slides, authorTitle, postCaption, audioTrack, hasMissingVideo };
 }
 
 function parseEmbedHtmlFallback(html, shortcode) {
@@ -316,7 +378,17 @@ function parseEmbedHtmlFallback(html, shortcode) {
     : null;
   if (vidMatch?.[1]) {
     slides.push({ type: 'video', url: unescapeIgString(vidMatch[1]), filename: `ig_${shortcode}.mp4` });
-    return { slides, authorTitle, postCaption, audioTrack: null };
+    return { slides, authorTitle, postCaption, audioTrack: null, hasMissingVideo: false };
+  }
+
+  // Reels/videos in /embed/captioned/ often omit video_url and render a WatchOnInstagram/VideoIcon overlay over a thumbnail <img>
+  const looksLikeEmbedVideo =
+    !explicitlyNotVideo &&
+    (/"is_video"\s*:\s*true/.test(html) ||
+      /"__typename"\s*:\s*"GraphVideo"/.test(html) ||
+      /WatchOnInstagram|EmbeddedMediaVideo|videoSpritePlayButton|VideoIcon/i.test(html));
+  if (looksLikeEmbedVideo) {
+    return { slides: [], authorTitle, postCaption, audioTrack: null, hasMissingVideo: true };
   }
 
   const imgTagMatch =
@@ -343,12 +415,15 @@ function parseEmbedHtmlFallback(html, shortcode) {
       if (srcMatch?.[1]) bestImg = unescapeIgString(srcMatch[1]);
     }
     if (bestImg && !/\/s150x150\//i.test(bestImg)) {
+      if (isIgVideoThumbnailUrl(bestImg)) {
+        return { slides: [], authorTitle, postCaption, audioTrack: null, hasMissingVideo: true };
+      }
       const ext = getIgExtFromUrl(bestImg, 'jpg');
       slides.push({ type: 'photo', url: bestImg, filename: `ig_${shortcode}.${ext}` });
     }
   }
 
-  return { slides, authorTitle, postCaption, audioTrack: null };
+  return { slides, authorTitle, postCaption, audioTrack: null, hasMissingVideo: false };
 }
 
 function pickRicherIgResult(a, b) {
@@ -493,10 +568,66 @@ async function queryInstagramGraphql(shortcode, docId, auth = null) {
   return null;
 }
 
+async function queryInstagramPolarisMedia(shortcode, auth = null) {
+  const mediaId = shortcodeToMediaId(shortcode);
+  if (!mediaId) return null;
+  const lsd = 'AVqbxe3J_YA';
+  const headers = {
+    'User-Agent': USER_AGENT,
+    'X-IG-App-ID': '936619743392459',
+    'X-FB-LSD': lsd,
+    'X-ASBD-ID': '129477',
+    'X-FB-Friendly-Name': 'PolarisLoggedOutDesktopWWWPostRootContentQuery',
+    'Sec-Fetch-Site': 'same-origin',
+    Origin: 'https://www.instagram.com',
+    Referer: `https://www.instagram.com/reel/${shortcode}/`,
+  };
+  if (auth?.cookie) headers.Cookie = auth.cookie;
+  if (auth?.csrfToken) headers['X-CSRFToken'] = auth.csrfToken;
+
+  try {
+    const res = await fetchWithTimeout(
+      'https://www.instagram.com/api/graphql',
+      {
+        method: 'POST',
+        headers,
+        body: fetch.body.form({
+          lsd,
+          fb_api_caller_class: 'RelayModern',
+          fb_api_req_friendly_name: 'PolarisLoggedOutDesktopWWWPostRootContentQuery',
+          server_timestamps: 'true',
+          variables: JSON.stringify({ media_id: mediaId }),
+          doc_id: '27130156389949648',
+        }),
+      },
+      10000
+    );
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const root = data?.data?.xig_polaris_media;
+    const media = root?.if_not_gated_logged_out || root;
+    if (!media || typeof media !== 'object') return null;
+    return parseIgMediaObject(media, shortcode);
+  } catch {
+    return null;
+  }
+}
+
 export async function extractViaInstagramEmbedOrGraphql(shortcode, isReelUrl = false) {
   let embedResult = null;
   let metaAuthor = '';
   let metaCaption = '';
+
+  // 0. Primary: PolarisLoggedOutDesktopWWWPostRootContentQuery (by numeric media_id)
+  // Returns exact XIGPolarisVideoMedia (even with licensed music!) & XIGPolarisCarouselMedia / XIGPolarisImageMedia cleanly.
+  const polaris = await queryInstagramPolarisMedia(shortcode);
+  if (polaris) {
+    metaAuthor = polaris.authorTitle || '';
+    metaCaption = polaris.postCaption || '';
+    if (polaris.slides.length && !polaris.hasMissingVideo) {
+      return { ...polaris, metaAuthor, metaCaption };
+    }
+  }
 
   const embedUrls = isReelUrl
     ? [
@@ -521,25 +652,27 @@ export async function extractViaInstagramEmbedOrGraphql(shortcode, isReelUrl = f
           const parsed = parseIgMediaObject(mediaObj, shortcode);
           metaAuthor = metaAuthor || parsed.authorTitle;
           metaCaption = metaCaption || parsed.postCaption;
-          if (parsed.slides.length) {
+          if (parsed.slides.length && !parsed.hasMissingVideo) {
             embedResult = parsed;
             if (parsed.slides.some(s => s.type === 'video') || parsed.audioTrack) {
               return { ...parsed, metaAuthor, metaCaption };
             }
             break;
           }
+          if (parsed.hasMissingVideo) break;
         }
         if (!embedResult) {
           const htmlFallback = parseEmbedHtmlFallback(html, shortcode);
           metaAuthor = metaAuthor || htmlFallback.authorTitle;
           metaCaption = metaCaption || htmlFallback.postCaption;
-          if (htmlFallback.slides.length) {
+          if (htmlFallback.slides.length && !htmlFallback.hasMissingVideo) {
             embedResult = htmlFallback;
             if (htmlFallback.slides[0].type === 'video') {
               return { ...htmlFallback, metaAuthor, metaCaption };
             }
             break;
           }
+          if (htmlFallback.hasMissingVideo) break;
         }
       } catch {}
     }
@@ -804,16 +937,18 @@ async function resolveEeOriginalImage(shortcode, idx) {
   return null;
 }
 
-export async function resolveEeMediaSlide(shortcode, idx, info, seenSlideUrls) {
+export async function resolveEeMediaSlide(shortcode, idx, info, seenSlideUrls, options = {}) {
   if (!info || info.outOfRange || info.notFound) return null;
+  const { isReelUrl = false } = options;
   const vidUrl = info.videoUrl || '';
   const imgUrl = info.imageUrl && !info.imageUrl.includes('/grid/') ? info.imageUrl : '';
   const suffix = idx > 1 ? `_${idx}` : '';
 
-  // eeinstagram wraps photo+music posts as /videos/<sc>/<idx>?audio=1; probe raw CDN /images/<sc>/<idx> first!
-  if (vidUrl && /\/videos\/[^/?#]+(?:\/\d+)?(?:\?.*audio=|$)/i.test(vidUrl)) {
+  // eeinstagram appends ?audio=1 to BOTH real videos AND photo+music posts!
+  // Only unwrap to raw /images/<sc>/<idx> when NOT a reel AND the resolved image is NOT a video cover thumbnail.
+  if (vidUrl && !isReelUrl && /\/videos\/[^/?#]+(?:\/\d+)?(?:\?.*audio=|$)/i.test(vidUrl)) {
     const origPhoto = await resolveEeOriginalImage(shortcode, idx);
-    if (origPhoto && !seenSlideUrls.has(origPhoto.url)) {
+    if (origPhoto && !isIgVideoThumbnailUrl(origPhoto.url) && !seenSlideUrls.has(origPhoto.url)) {
       seenSlideUrls.add(origPhoto.url);
       return { type: 'photo', url: origPhoto.url, filename: `ig_${shortcode}${suffix}.${origPhoto.ext}` };
     }
@@ -923,12 +1058,12 @@ export async function handleInstagram(chatId, url, replyToMsgId = null) {
               if (!sRes.ok) break;
               info = parseEeInstagramHtml(await sRes.text());
             }
-            const slide = await resolveEeMediaSlide(shortcode, idx, info, seenSlideUrls);
+            const slide = await resolveEeMediaSlide(shortcode, idx, info, seenSlideUrls, { isReelUrl: false });
             if (!slide) break;
             slides.push(slide);
           }
         } else {
-          const single = await resolveEeMediaSlide(shortcode, 1, baseInfo, seenSlideUrls);
+          const single = await resolveEeMediaSlide(shortcode, 1, baseInfo, seenSlideUrls, { isReelUrl });
           if (single) slides.push(single);
         }
       }
